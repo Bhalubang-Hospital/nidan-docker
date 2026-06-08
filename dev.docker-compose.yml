@@ -33,6 +33,7 @@ services:
       - OPENELIS_DOMAIN=${OPENELIS_DOMAIN}
       # OpenELIS context path (must match the backend SERVER_SERVLET_CONTEXT_PATH)
       - OPENELIS_CONTEXT_PATH=${OPENELIS_CONTEXT_PATH:-/api/OpenELIS-Global/}
+      - DASHBOARD_ODOO_URL=${DASHBOARD_ODOO_URL:-http://localhost:8069}
     networks:
       - nidan-network
     depends_on:
@@ -118,7 +119,7 @@ services:
     container_name: nidan-openmrs-db
     #command: "mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --sql-mode=''"
     # Configure MariaDB with utf8mb4 and row‑based binlog (unique server-id, relaxed SQL mode) for Debezium/OpenMRS CDC --do the same if running external
-    command: "mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --sql-mode='' --server-id=2749 --log-bin=mysql-bin --binlog_format=ROW --binlog_row_image=FULL"
+    command: "mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --sql-mode='' --server-id=2749 --log-bin=mysql-bin --binlog_format=ROW --binlog_row_image=FULL --max-allowed-packet=256M"
     healthcheck:
       test: "mysql --user=${OPENMRS_DB_USER:-openmrs} --password=${OPENMRS_DB_PASSWORD:-openmrs} --execute \"SHOW DATABASES;\""
       interval: 3s
@@ -160,10 +161,16 @@ services:
       # Nidan OIS connector
       - NIDAN_OIS_URL=${NIDAN_OIS_URL}
       - NIDAN_OIS_SECRET=${NIDAN_OIS_SECRET}
+      # First-run auto-install scans both the open-source and private addon dirs
+      - ADDONS_INIT_DIRS=/mnt/extra-addons /mnt/private-addons
     volumes:
       - odoo-data:/var/lib/odoo
       # Mount custom addons (including nidan_connector) for dev
-      - ${ODOO_EXTRA_ADDONS_HOST_PATH}:/mnt/extra-addons
+      - ${ODOO_ADDONS_PATH:-../odoo_19_addons}:/mnt/extra-addons
+      # Mount the private/closed-source addons for live editing in dev
+      - ${ODOO_PRIVATE_ADDONS_HOST_PATH:-../nidan_odoo_extra_addons}:/mnt/private-addons
+      # odoo.conf template so addons_path includes /mnt/private-addons
+      - ./odoo/odoo.conf:/mnt/odoo.conf.template:ro
     networks:
       - nidan-network
     depends_on:
@@ -269,6 +276,8 @@ services:
       # Authentication (dynamic/secrets)
       ORTHANC__REGISTERED_USERS: |
         {"${ORTHANC_USERNAME:-nidan}": "${ORTHANC_PASSWORD:-nidan}"}
+      ORTHANC_USERNAME: "${ORTHANC_USERNAME:-nidan}"
+      ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:-nidan}"
     networks:
       - nidan-network
     depends_on:
@@ -280,7 +289,8 @@ services:
       # Worklist directory for MWL plugin
       - ./orthanc/worklists:/var/lib/orthanc/worklists
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8042/system" ]
+      # AuthenticationEnabled in orthanc.json — /system needs Basic auth (same as the browser UI).
+      test: [ "CMD-SHELL", "curl -sf -u \"$ORTHANC_USERNAME:$ORTHANC_PASSWORD\" http://127.0.0.1:8042/system -o /dev/null" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -458,17 +468,13 @@ services:
     build:
       context: ./middleware
       dockerfile: Dockerfile.cis
-    #image: dipakthapa/cis:latest
-    #image: prabin12/kafka-stack:cis-latest
+    image: ${NIDAN_CIS_IMAGE:-nidan-cis:local}
     container_name: nidan-cis
     ports:
       - "${CIS_PORT:-8081}:${CIS_PORT:-8081}"
 
-    # To call an EXTERNAL HTTPS OpenELIS :
-    # 1) Map the ELIS hostname to your ELIS IP
-    # extra_hosts:
-    #   - "elis.openelis-global.org:192.168.1.74"
-    # 2) Mount a truststore built from the ELIS TLS certificate
+    # TLS truststore: run scripts/create-gateway-truststore.sh if gateway-truststore.p12 is missing.
+    # Override with CIS_JAVA_TOOL_OPTIONS= (empty) only when debugging without this mount.
     volumes:
       - ./gateway-truststore.p12:/etc/ssl/certs/gateway-truststore.p12:ro
     environment:
@@ -476,6 +482,7 @@ services:
       - INTEGRATION_DB_URL=jdbc:postgresql://${INTEGRATION_DB_HOST:-nidan-integration-db}:${INTEGRATION_DB_PORT:-5432}/${INTEGRATION_DB_NAME:-nidan_integration}
       - INTEGRATION_DB_USER=${INTEGRATION_DB_USER:-nidan}
       - INTEGRATION_DB_PASSWORD=${INTEGRATION_DB_PASSWORD:-nidan}
+      - MANAGEMENT_HEALTH_REDIS_ENABLED=${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
       # OpenMRS database (used by Debezium)
       - OPENMRS_DB_HOST=${OPENMRS_DB_HOST:-openmrs-db}
       - OPENMRS_DB_PORT=${OPENMRS_DB_PORT:-3306}
@@ -504,12 +511,19 @@ services:
       - OPENELIS_ORDER_BUNDLE_PATH=${OPENELIS_ORDER_BUNDLE_PATH:-/fhir/tasks}
       - OPENELIS_USERNAME=${OPENELIS_USERNAME:-admin}
       - OPENELIS_PASSWORD=${OPENELIS_PASSWORD:-adminADMIN!}
-      - JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=/etc/ssl/certs/gateway-truststore.p12 -Djavax.net.ssl.trustStorePassword=gatewayTrust123 -Djdk.internal.httpclient.disableHostnameVerification=true
+      - JAVA_TOOL_OPTIONS=${CIS_JAVA_TOOL_OPTIONS:--Djavax.net.ssl.trustStore=/etc/ssl/certs/gateway-truststore.p12 -Djavax.net.ssl.trustStorePassword=gatewayTrust123 -Djdk.internal.httpclient.disableHostnameVerification=true}
       # Integration
       - INTEGRATION_SOURCE_SYSTEM=${INTEGRATION_SOURCE_SYSTEM:-CIS}
       - INTEGRATION_SKIP_SOURCE_SYSTEMS=${INTEGRATION_SKIP_SOURCE_SYSTEMS:-OPENMRS}
       - RADIOLOGY_ACCESSION_PREFIX=${RADIOLOGY_ACCESSION_PREFIX:-RAD-}
       - RADIOLOGY_PROCEDURE_CODE_PREFIX=${RADIOLOGY_PROCEDURE_CODE_PREFIX:-RAD-}
+      # Per-flow toggles (integration.flows.* — see nidan-docker/env.template)
+      - INTEGRATION_FLOW_RADIOLOGY_MWL_ENABLED=${INTEGRATION_FLOW_RADIOLOGY_MWL_ENABLED:-true}
+      - INTEGRATION_FLOW_RADIOLOGY_POS_ENABLED=${INTEGRATION_FLOW_RADIOLOGY_POS_ENABLED:-true}
+      - INTEGRATION_FLOW_LAB_OPENELIS_ENABLED=${INTEGRATION_FLOW_LAB_OPENELIS_ENABLED:-true}
+      - INTEGRATION_FLOW_LAB_POS_ENABLED=${INTEGRATION_FLOW_LAB_POS_ENABLED:-true}
+      - INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_LAB_ENABLED=${INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_LAB_ENABLED:-true}
+      - INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_RADIOLOGY_ENABLED=${INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_RADIOLOGY_ENABLED:-true}
       # Debezium Embedded (CIS)--var control for debezium
       - DEBEZIUM_ENABLED=${DEBEZIUM_ENABLED:-false}
       - DEBEZIUM_DB_USER=${DEBEZIUM_DB_USER:-root}
@@ -519,6 +533,8 @@ services:
         condition: service_healthy
       nidan-kafka:
         condition: service_started
+      openmrs-db:
+        condition: service_healthy
       openmrs-backend:
         condition: service_healthy
       # Orthanc dependency made optional - CIS can start without it if radiology is disabled
@@ -537,8 +553,7 @@ services:
     build:
       context: ./middleware
       dockerfile: Dockerfile.ois
-    #image: dipakthapa/ois:latest
-    #image: prabin12/kafka-stack:ois-latest
+    image: ${NIDAN_OIS_IMAGE:-nidan-ois:local}
     container_name: nidan-ois
     ports:
       - "${OIS_PORT:-8082}:${OIS_PORT:-8082}"
@@ -547,6 +562,7 @@ services:
       - INTEGRATION_DB_URL=jdbc:postgresql://${INTEGRATION_DB_HOST:-nidan-integration-db}:${INTEGRATION_DB_PORT:-5432}/${INTEGRATION_DB_NAME:-nidan_integration}
       - INTEGRATION_DB_USER=${INTEGRATION_DB_USER:-nidan}
       - INTEGRATION_DB_PASSWORD=${INTEGRATION_DB_PASSWORD:-nidan}
+      - MANAGEMENT_HEALTH_REDIS_ENABLED=${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
       # Kafka
       - KAFKA_BOOTSTRAP_SERVERS=nidan-kafka:${KAFKA_PORT:-9092}
       - OIS_KAFKA_GROUP_ID=${OIS_KAFKA_GROUP_ID:-nidan-ois}
@@ -557,11 +573,16 @@ services:
       - NIDAN_OIS_URL=${NIDAN_OIS_URL:-http://nidan-ois:8082}
       - NIDAN_OIS_SECRET=${NIDAN_OIS_SECRET:-nidan-secret-password}
       - ODOO_PASSWORD=${ODOO_PASSWORD:-nidan}
-      - ODOO_POS_ORDER_REF_PREFIX=${ODOO_POS_ORDER_REF_PREFIX:-RAD-}
-      - ODOO_POS_DEFAULT_RADIOLOGY_PRODUCT_ID=${ODOO_POS_DEFAULT_RADIOLOGY_PRODUCT_ID:-1}
       # Integration
       - OIS_WEBHOOK_SECRET=${NIDAN_OIS_SECRET:-nidan-secret-password}
       - SKIP_SOURCE_SYSTEMS_FOR_ODOO=${SKIP_SOURCE_SYSTEMS_FOR_ODOO:-ODOO}
+      - ORTHANC_ENABLED=${ORTHANC_ENABLED:-true}
+      - INTEGRATION_FLOW_RADIOLOGY_MWL_ENABLED=${INTEGRATION_FLOW_RADIOLOGY_MWL_ENABLED:-true}
+      - INTEGRATION_FLOW_RADIOLOGY_POS_ENABLED=${INTEGRATION_FLOW_RADIOLOGY_POS_ENABLED:-true}
+      - INTEGRATION_FLOW_LAB_OPENELIS_ENABLED=${INTEGRATION_FLOW_LAB_OPENELIS_ENABLED:-true}
+      - INTEGRATION_FLOW_LAB_POS_ENABLED=${INTEGRATION_FLOW_LAB_POS_ENABLED:-true}
+      - INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_LAB_ENABLED=${INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_LAB_ENABLED:-true}
+      - INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_RADIOLOGY_ENABLED=${INTEGRATION_FLOW_DEBEZIUM_PUBLISH_ORDERS_RADIOLOGY_ENABLED:-true}
     depends_on:
       nidan-integration-db:
         condition: service_healthy

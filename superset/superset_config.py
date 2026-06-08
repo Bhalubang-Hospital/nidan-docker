@@ -1,5 +1,14 @@
 # Superset Configuration for Path-Based Deployment
 import os
+
+# Use PyMySQL for any mysql:// SQLAlchemy URIs (avoids requiring mysqlclient / MySQLdb C extension)
+try:
+    import pymysql
+
+    pymysql.install_as_MySQLdb()
+except ImportError:
+    pass
+
 from flask import redirect
 from flask_appbuilder import expose, IndexView
 
@@ -19,10 +28,15 @@ APPLICATION_ROOT = '/superset'
 # Static assets must use the same prefix so CSS/JS load correctly behind proxy
 STATIC_ASSETS_PREFIX = '/superset'
 
+# Fix health check path issue
+SERVER_NAME = None
+
 # WTF CSRF settings
 WTF_CSRF_ENABLED = True
 WTF_CSRF_EXEMPT_LIST = []
 WTF_CSRF_TIME_LIMIT = None
+WTF_CSRF_SSL_STRICT = False
+WTF_CSRF_CHECK_DEFAULT = False
 
 # Set the authentication type
 # AUTH_TYPE = AUTH_DB  # Database authentication (default)
@@ -49,14 +63,67 @@ CORS_OPTIONS = {
 
 # Session configuration
 SESSION_COOKIE_NAME = 'superset_session'
-SESSION_COOKIE_PATH = '/superset/'
+SESSION_COOKIE_PATH = '/superset'
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = False  # Set to True if using HTTPS
+SESSION_COOKIE_SAMESITE = 'Lax'
 
-# Disable async queries for simplicity (optional)
+# Enable all visualization types and chart plugins
+DEFAULT_VIZ_TYPE = "table"
+
+# Enable ECharts visualization plugins and other features
 FEATURE_FLAGS = {
     "ENABLE_TEMPLATE_PROCESSING": True,
+    "ENABLE_CHART_FLUX_FILTERS": True,
+    "DASHBOARD_CACHE": True,
+    "ENABLE_EMBEDDED_SUPERSET": True,
+    "ENABLE_EXPLORE_JSON": True,
+    "ENABLE_CUSTOM_FORM_DATA": True,
+    "KV_STORE": True,
+    "ENABLE_PERMISSION_V2": True,
+    # Per-dashboard role-based access control (hospital RBAC: lab/pharmacy/etc.)
+    "DASHBOARD_RBAC": True,
 }
+
+# ---------------------------------------------------------------------------
+# Theme — force LIGHT mode for the hospital setting (no dark toggle).
+# Superset 6: setting THEME_DARK = None forces a single (light) theme for all.
+# ---------------------------------------------------------------------------
+THEME_DEFAULT = {"algorithm": "default"}  # light
+THEME_DARK = None                          # disables dark mode + OS-preference switching
+ENABLE_UI_THEME_ADMINISTRATION = False     # admins can't switch the system theme away from light
+
+# ---------------------------------------------------------------------------
+# Role-based access
+# ---------------------------------------------------------------------------
+# Anonymous (not-logged-in) visitors get the Public role, used for the public
+# dashboards / embedded monitor screens. PUBLIC_ROLE_LIKE grants Public the
+# base perms needed to render a dashboard; DASHBOARD_RBAC then restricts which
+# dashboards Public can actually see (only those with the Public role attached).
+AUTH_ROLE_PUBLIC = "Public"
+PUBLIC_ROLE_LIKE = "Gamma"
+
+# Enable all built-in chart types
+DEFAULT_VIZ_TYPE = "table"
+
+# Enable all visualization types by removing restrictions
+# This ensures all built-in chart types are available
+ENABLE_CUSTOM_FORM_DATA = True
+KV_STORE = True
+
+# Chart type configuration - ensure basic charts are available
+# The bar chart should be available by default in Superset
+
+# Database connection configuration
+SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+# SQLite doesn't support connection pooling, so only set engine options for non-SQLite databases
+if not SQLALCHEMY_DATABASE_URI.startswith('sqlite'):
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_size": 10,
+        "pool_recycle": 3600,
+        "pool_pre_ping": True,
+    }
 
 # Configure logging
 LOGGER_LEVEL = 'INFO'

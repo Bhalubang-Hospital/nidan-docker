@@ -1,6 +1,6 @@
-#!/bin/bash -aeu
+#!/bin/bash
 #       Custom startup script for Nidan (PostgreSQL URL fix; no custom dialect)
-
+set -aeu
 source /openmrs/startup-init.sh
 
 DATA_DIR="${OMRS_DATA_DIR:-/openmrs/data}"
@@ -87,6 +87,14 @@ rm -fR "${TOMCAT_TEMP_DIR:?}/*"
 
 echo "Loading WAR into appropriate location"
 cp -r "${OMRS_DISTRO_CORE}/." "${TOMCAT_WEBAPPS_DIR}"
+
+# Overlay locally built/custom modules (if mounted) into OpenMRS module directory.
+# This keeps custom module updates (e.g. bahmni-ipd) active across container restarts.
+if [ -d /openmrs/custom_modules ] && ls /openmrs/custom_modules/*.omod 1>/dev/null 2>&1; then
+  echo "Copying custom OMODs from /openmrs/custom_modules -> ${DATA_DIR}/modules"
+  mkdir -p "${DATA_DIR}/modules"
+  cp -f /openmrs/custom_modules/*.omod "${DATA_DIR}/modules/"
+fi
 
 if [ -f "${OMRS_RUNTIME_PROPERTIES_FILE}" ]; then
   echo "Force updating ${OMRS_RUNTIME_PROPERTIES_FILE} with database connection"
