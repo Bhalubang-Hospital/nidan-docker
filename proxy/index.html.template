@@ -533,7 +533,6 @@
 
     </div>
   </footer>
-
   <script>
       const services = [
           { id: 'openmrs', url: '/openmrs/spa/config.json' },
