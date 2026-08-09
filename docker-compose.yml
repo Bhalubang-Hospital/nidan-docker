@@ -142,9 +142,9 @@ services:
       retries: 3
 
   openmrs-db:
-    image: mariadb:10.11
+    #image: mariadb:10.11
     profiles: ["openmrs","nidanehr-standard"]
-    #image: trigonaltechnology/openmrs-db:latest
+    image: bhalubang/openmrs-db:latest
     container_name: nidan-openmrs-db
     # Debezium/CIS: row-based binlog events for wide rows must fit max_allowed_packet (error 1236 if too small).
     command: mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --log-bin=mysql-bin --binlog_format=ROW --server-id=1 --binlog_row_image=FULL --max-allowed-packet=512M
@@ -198,9 +198,9 @@ services:
     # Open-source base by default; hospitals set ODOO_IMAGE to the private image
     # (e.g. trigonaltechnology/nidan_odoo_pro:stable) which bakes the closed-source
     # addons into /mnt/private-addons. No host addon source is mounted in prod.
-    # image: ${ODOO_IMAGE:-trigonaltechnology/nidan_odoo:stable}
+    # image: ${ODOO_IMAGE:-bhalubang/nidan_odoo:stable}
     profiles: ["odoo","nidanehr-standard"]
-    image: trigonaltechnology/nidan_odoo_pro:latest
+    image: bhalubang/nidan_odoo:latest
     container_name: nidan-odoo
     command: sh -c "odoo -d \${ODOO_DB_NAME:-nidan} --proxy-mode --dev=xml -u all"
     ports:
