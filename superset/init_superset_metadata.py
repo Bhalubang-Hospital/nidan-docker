@@ -42,6 +42,11 @@ sys.path.insert(0, "/app")
 # of full-width / 3-col / 2-col rows instead of a fixed 2-column layout).
 CHART_WIDTHS = {}
 
+# Odoo stores every timestamp in UTC. Nepal is UTC+05:45, so anything issued after
+# 18:15 UTC belongs to the *next* local day — a daily chart bucketed on raw UTC puts
+# those rows on the wrong bar. Datasets that roll up per day convert to local time.
+LOCAL_TZ = os.environ.get("REPORT_TZ", "Asia/Kathmandu")
+
 
 # --------------------------------------------------------------------------- #
 # Connection helpers
@@ -447,6 +452,43 @@ def build_dataset_specs():
             ("Amount", "SUM(amount)"),
             ("Payments", "COUNT(payment_id)"),
             ("Orders", "COUNT(DISTINCT pos_order_id)"),
+        ],
+    })
+
+    # ---- Odoo: TICKET SALES (POS line grain, ticket products only) ------- #
+    # A "ticket" is the registration slip a patient buys at the counter, modelled
+    # in Odoo as a product with clinical_product_type='ticket' (OPD / IPD / ER /
+    # Lab Ticket) — distinct from the OpenMRS visit_type on fct_visits. POS is the
+    # issuing event; the invoice is generated from it, so counting POS lines here
+    # avoids double-counting the same ticket via account_move_line.
+    specs.append({
+        "db": "odoo", "table_name": "fct_ticket_sales", "dttm": "issued_at",
+        "sql": f"""
+            SELECT
+                pol.id AS line_id,
+                po.id AS pos_order_id,
+                (po.date_order AT TIME ZONE 'UTC' AT TIME ZONE '{LOCAL_TZ}') AS issued_at,
+                po.partner_id,
+                COALESCE(pt.name->>'en_US', pt.name->>'en', 'Unknown') AS ticket_type,
+                pol.qty AS qty,
+                pol.price_subtotal_incl AS amount
+            FROM pos_order_line pol
+            JOIN pos_order po ON pol.order_id = po.id
+            JOIN product_product pp ON pol.product_id = pp.id
+            JOIN product_template pt ON pp.product_tmpl_id = pt.id
+            WHERE pt.clinical_product_type = 'ticket'
+              AND po.state NOT IN ('draft', 'cancel')
+        """,
+        "columns": [
+            ("line_id", "BIGINT", False), ("pos_order_id", "BIGINT", False),
+            ("issued_at", "TIMESTAMP", False), ("partner_id", "BIGINT", False),
+            ("ticket_type", "VARCHAR", True), ("qty", "FLOAT", False),
+            ("amount", "FLOAT", False),
+        ],
+        "metrics": [
+            ("Patients", "COUNT(DISTINCT partner_id)"),
+            ("Tickets", "COUNT(DISTINCT line_id)"),
+            ("Ticket Revenue", "SUM(amount)"),
         ],
     })
 
@@ -915,11 +957,12 @@ def build_chart_specs():
         cat_bar_chart("Patients by District", "fct_patients", "Patients", "district"),
         cat_bar_chart("Visits by Hour of Day", "fct_visits", "Visits", "hour_of_day", row_limit=24),
         pie_chart("Visits by Status", "fct_visits", "Visits", "visit_status"),
-        # Patients per visit ticket per day. "Unique Patients" (COUNT DISTINCT
-        # patient_id), not "Visits" — one patient with two OPD visits in a day is
-        # one patient on that day's OPD ticket, not two.
-        stacked_bar("Patients per Visit Ticket (Daily)", "fct_visits", "Unique Patients",
-                    "started_at", "visit_type", time_grain="P1D", width=12),
+        # Patients per ticket type per day, from the Odoo ticket products — not the
+        # OpenMRS visit_type, which "Visits Trend by Type" already reports on.
+        # "Patients" is COUNT(DISTINCT partner_id): a patient buying two OPD tickets
+        # in a day is one patient on that day's OPD bar, not two.
+        stacked_bar("Patients per Ticket Type (Daily)", "fct_ticket_sales", "Patients",
+                    "issued_at", "ticket_type", time_grain="P1D", width=12),
     ]
 
     # Clinical operations
@@ -1097,10 +1140,10 @@ def build_dashboard_specs():
             "public": True,
             "charts": ["Gender Distribution", "Age Distribution", "Top Municipalities",
                        "Patients by District", "Visits by Hour of Day", "Visits by Status",
-                       "Patients per Visit Ticket (Daily)"],
+                       "Patients per Ticket Type (Daily)"],
             # Own date filter defaulting to a week, so the ticket chart is readable at
             # daily grain without dragging the other six charts off their 90-day window.
-            "chart_time_ranges": {"Patients per Visit Ticket (Daily)":
+            "chart_time_ranges": {"Patients per Ticket Type (Daily)":
                                   ("Ticket Date Range", "Last week")},
             "filters": [("fct_patients", "gender", "Gender"),
                         ("fct_patients", "age_group", "Age Group"),
