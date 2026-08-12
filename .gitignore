@@ -1,5 +1,6 @@
-# Environment variables
-.env
+# Environment variables (matches .env, .env.local, .env.prod, ... at any depth).
+# env.template has no leading dot, so it stays tracked.
+.env*
 
 # Legacy backup (archived old Bahmni-based configuration)
 _backup_legacy/
