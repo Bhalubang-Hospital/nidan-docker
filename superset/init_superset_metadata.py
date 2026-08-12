@@ -825,9 +825,13 @@ def heatmap_chart(name, table, metric, x_col, y_col, filters=None, width=6):
     })
 
 
-def stacked_bar(name, table, metric, x_col, series_col, filters=None, row_limit=10000, width=6):
+def stacked_bar(name, table, metric, x_col, series_col, filters=None, row_limit=10000,
+                width=6, time_grain=None):
+    """time_grain (e.g. "P1D") is only needed when x_col is temporal — a categorical
+    x_col buckets itself, but a TIMESTAMP column would otherwise render one bar per
+    raw timestamp instead of one per day."""
     CHART_WIDTHS[name] = width
-    return (name, table, "echarts_timeseries_bar", {
+    params = {
         "x_axis": x_col,
         "metrics": [metric],
         "groupby": [series_col],
@@ -836,7 +840,11 @@ def stacked_bar(name, table, metric, x_col, series_col, filters=None, row_limit=
         "time_range": "No filter",
         "show_legend": True,
         "adhoc_filters": filters or [],
-    })
+    }
+    if time_grain:
+        params["time_grain_sqla"] = time_grain
+        params["x_axis_sort_asc"] = True
+    return (name, table, "echarts_timeseries_bar", params)
 
 
 def multi_metric_bar(name, table, metrics, dimension, filters=None, row_limit=50,
@@ -907,6 +915,11 @@ def build_chart_specs():
         cat_bar_chart("Patients by District", "fct_patients", "Patients", "district"),
         cat_bar_chart("Visits by Hour of Day", "fct_visits", "Visits", "hour_of_day", row_limit=24),
         pie_chart("Visits by Status", "fct_visits", "Visits", "visit_status"),
+        # Patients per visit ticket per day. "Unique Patients" (COUNT DISTINCT
+        # patient_id), not "Visits" — one patient with two OPD visits in a day is
+        # one patient on that day's OPD ticket, not two.
+        stacked_bar("Patients per Visit Ticket (Daily)", "fct_visits", "Unique Patients",
+                    "started_at", "visit_type", time_grain="P1D", width=12),
     ]
 
     # Clinical operations
@@ -1083,7 +1096,12 @@ def build_dashboard_specs():
             "title": "NidanEHR · Patient Flow & Demographics",
             "public": True,
             "charts": ["Gender Distribution", "Age Distribution", "Top Municipalities",
-                       "Patients by District", "Visits by Hour of Day", "Visits by Status"],
+                       "Patients by District", "Visits by Hour of Day", "Visits by Status",
+                       "Patients per Visit Ticket (Daily)"],
+            # Own date filter defaulting to a week, so the ticket chart is readable at
+            # daily grain without dragging the other six charts off their 90-day window.
+            "chart_time_ranges": {"Patients per Visit Ticket (Daily)":
+                                  ("Ticket Date Range", "Last week")},
             "filters": [("fct_patients", "gender", "Gender"),
                         ("fct_patients", "age_group", "Age Group"),
                         ("fct_patients", "district", "District"),
@@ -1329,9 +1347,21 @@ def build_position_json(title, slices, note=None):
     return position
 
 
-def build_native_filters(title, filter_specs, table_to_dataset, primary_dataset_id):
-    """Time Range + Time Grain + one select per (table, column, label)."""
+def build_native_filters(title, filter_specs, table_to_dataset, primary_dataset_id,
+                         slices=None, chart_time_ranges=None):
+    """Time Range + Time Grain + one select per (table, column, label).
+
+    chart_time_ranges maps chart name -> (filter label, default range) for charts that
+    need their own window instead of the dashboard-wide one. Superset scopes a native
+    filter by *excluding* chart ids, so a per-chart filter excludes every other chart
+    and the dashboard-wide Time Range excludes the charts that brought their own.
+    """
     filters = []
+    slices = slices or []
+    chart_time_ranges = chart_time_ranges or {}
+    all_ids = [s.id for s in slices]
+    ids_by_name = {s.slice_name: s.id for s in slices}
+    own = {n: ids_by_name[n] for n in chart_time_ranges if n in ids_by_name}
 
     # Time Range (presets + custom range). Default to a generous window.
     filters.append({
@@ -1346,9 +1376,29 @@ def build_native_filters(title, filter_specs, table_to_dataset, primary_dataset_
             "extraFormData": {"time_range": "Last 90 days"},
         },
         "cascadeParentIds": [],
-        "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+        "scope": {"rootPath": ["ROOT_ID"], "excluded": sorted(own.values())},
         "description": "",
     })
+
+    # Per-chart Time Range for charts that need their own default window.
+    for name, cid in own.items():
+        label, default_range = chart_time_ranges[name]
+        filters.append({
+            "id": _hash_id("NATIVE_FILTER", title, "time_range", name),
+            "name": label,
+            "filterType": "filter_time",
+            "type": "NATIVE_FILTER",
+            "targets": [{}],
+            "controlValues": {},
+            "defaultDataMask": {
+                "filterState": {"value": default_range},
+                "extraFormData": {"time_range": default_range},
+            },
+            "cascadeParentIds": [],
+            "scope": {"rootPath": ["ROOT_ID"],
+                      "excluded": sorted(i for i in all_ids if i != cid)},
+            "description": f"Date window for '{name}'",
+        })
 
     # Time Grain: Day / Week / Month / Quarter / Year
     filters.append({
@@ -1580,7 +1630,8 @@ def main():
             primary_ds_id = slices[0].datasource_id
             position = build_position_json(title, slices, note=spec.get("note"))
             native_filters = build_native_filters(
-                title, spec.get("filters", []), table_to_dataset, primary_ds_id)
+                title, spec.get("filters", []), table_to_dataset, primary_ds_id,
+                slices=slices, chart_time_ranges=spec.get("chart_time_ranges"))
             json_metadata = json.dumps({
                 "native_filter_configuration": native_filters,
                 "cross_filters_enabled": True,
