@@ -1435,7 +1435,10 @@ def build_native_filters(title, filter_specs, table_to_dataset, primary_dataset_
     ids_by_name = {s.slice_name: s.id for s in slices}
     own = {n: ids_by_name[n] for n in chart_time_ranges if n in ids_by_name}
 
-    # Time Range (presets + custom range). Default to a generous window.
+    # Time Range. Use one of Superset's radio presets — "Last day", "Last week",
+    # "Last month", "Last quarter", "Last year". Anything else (e.g. "Last 90 days")
+    # still parses, but the control opens in "Advanced" mode as two free-text date
+    # boxes instead of the preset list, which is far worse to drive.
     filters.append({
         "id": _hash_id("NATIVE_FILTER", title, "time_range"),
         "name": "Time Range",
@@ -1444,8 +1447,8 @@ def build_native_filters(title, filter_specs, table_to_dataset, primary_dataset_
         "targets": [{}],
         "controlValues": {},
         "defaultDataMask": {
-            "filterState": {"value": "Last 90 days"},
-            "extraFormData": {"time_range": "Last 90 days"},
+            "filterState": {"value": "Last month"},
+            "extraFormData": {"time_range": "Last month"},
         },
         "cascadeParentIds": [],
         "scope": {"rootPath": ["ROOT_ID"], "excluded": sorted(own.values())},
