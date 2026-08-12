@@ -205,7 +205,12 @@ services:
     profiles: ["odoo","nidanehr-standard"]
     image: bhalubang/nidan_odoo:latest
     container_name: nidan-odoo
-    command: sh -c "odoo -d \${ODOO_DB_NAME:-nidan} --proxy-mode --dev=xml -u all"
+    #command: sh -c "odoo -d \${ODOO_DB_NAME:-nidan} --proxy-mode --dev=xml -u all"
+    command:
+      - odoo
+      - -d
+      - nidan
+      - --proxy-mode
     ports:
       - "8069:8069"
     environment:

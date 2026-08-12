@@ -39,3 +39,5 @@ gateway-truststore.p12
 gateway.pem
 OpenELIS-Global.war
 .gstack/
+backup-artifacts/
+.env
