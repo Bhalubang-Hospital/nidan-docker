@@ -776,8 +776,10 @@ def build_dataset_specs():
 
 
 # --------------------------------------------------------------------------- #
-# CHART helpers — every chart leaves time range/grain to the dashboard filters
-# (time_range="No filter", time_grain default P1D overridden by the grain filter)
+# CHART helpers — every chart leaves time range/grain to the dashboard filters.
+# The time range is NOT the "time_range" key set here (Superset 6 ignores it); it is
+# the TEMPORAL_RANGE adhoc filter that attach_temporal_filters() appends on the way
+# out of build_chart_specs(). time_grain default P1D is overridden by the grain filter.
 # --------------------------------------------------------------------------- #
 def ts_chart(name, table, metrics, x_axis, groupby=None, viz="echarts_timeseries_line", width=6):
     CHART_WIDTHS[name] = width
@@ -1116,7 +1118,34 @@ def build_chart_specs():
                     metrics=["Voided", "Voided %"], row_limit=20),
     ]
 
-    return charts
+    return attach_temporal_filters(charts)
+
+
+def attach_temporal_filters(charts):
+    """Give every chart a TEMPORAL_RANGE adhoc filter on its dataset's time column.
+
+    Superset 6 ignores the legacy top-level form_data "time_range" key: a query only
+    gets a WHERE on its time column when the chart carries a TEMPORAL_RANGE adhoc
+    filter, which is what the Explore UI emits. A dashboard's native Time Range filter
+    works by *overriding the comparator of that filter*, so a chart without one has
+    nothing to bind to and silently ignores the date filter.
+
+    Datasets with no time column (dttm=None, e.g. current stock snapshots) are skipped
+    — a point-in-time snapshot has nothing to range over.
+    """
+    dttm_by_table = {s["table_name"]: s.get("dttm") for s in build_dataset_specs()}
+    out = []
+    for name, table, viz, params in charts:
+        dttm = dttm_by_table.get(table)
+        if dttm:
+            params = dict(params)
+            params.pop("time_range", None)  # inert in Superset 6; drop the red herring
+            params["adhoc_filters"] = list(params.get("adhoc_filters") or []) + [{
+                "clause": "WHERE", "subject": dttm, "operator": "TEMPORAL_RANGE",
+                "comparator": "No filter", "expressionType": "SIMPLE",
+            }]
+        out.append((name, table, viz, params))
+    return out
 
 
 # --------------------------------------------------------------------------- #
