@@ -90,6 +90,8 @@ OpenELIS uses pre-built images from I-TECH. Configuration is managed through env
 # Configuration files are in openelis/volume/
 ```
 
+Analyzer instruments (e.g. Sysmex XN-350) connect via **openelis-analyzer-bridge** (ASTM TCP port **12000**). Drop plugin JARs into `openelis/volume/plugins/`. See [openelis/analyzer-bridge/README.md](openelis/analyzer-bridge/README.md).
+
 ### 8. Keycloak (Identity Management)
 Keycloak uses the official Quay.io image with realm imports.
 ```bash

@@ -471,10 +471,54 @@ services:
     networks:
       - nidan-network
     restart: unless-stopped # Auto-restart if it fails during startup
-    
-  # ============================================================================
-  # NIDAN INTEGRATION MIDDLEWARE (Kafka + Postgres + CIS/OIS)
-  # ============================================================================
+
+  # OpenELIS Analyzer Bridge — ASTM/HL7/serial middleware for instruments (e.g. Sysmex XN-350)
+  # XN-350 TCP: Host IP = Docker host, Port = 12000, Protocol = ASTM 1381-02/1394-97
+  openelis-analyzer-bridge:
+    profiles: ["openelis", "nidanehr-standard"]
+    image: ${OPENELIS_ANALYZER_BRIDGE_IMAGE:-itechuw/openelis-analyzer-bridge:latest}
+    platform: linux/amd64
+    container_name: nidan-openelis-analyzer-bridge
+    depends_on:
+      openelis:
+        condition: service_healthy
+    ports:
+      - "${OPENELIS_ANALYZER_BRIDGE_HTTP_PORT:-8442}:8443"   # Bridge HTTP API / health
+      # XN-350 on this LAN sends non-ENQ frames on 12000 → map host 12000 to E1381-95
+      - "${OPENELIS_ANALYZER_BRIDGE_ASTM_PORT:-12000}:12011"  # ASTM E1381-95 (plain TCP) — use with XN-350 @ 12000
+      - "${OPENELIS_ANALYZER_BRIDGE_ASTM02_PORT:-12010}:12001" # ASTM E1381-02 / LIS1-A (ENQ/ACK)
+      - "${OPENELIS_ANALYZER_BRIDGE_MLLP_PORT:-2575}:2575"   # HL7 MLLP (optional)
+    volumes:
+      - ./openelis/analyzer-bridge/configuration.yml:/app/configuration.yml:ro
+      # Dev profile expects PKCS12 at /etc/openelis-global/keystore (password kspass)
+      - ./openelis/volume/certs:/etc/openelis-global:ro
+      # Uncomment for FILE-based analyzers:
+      # - ./openelis/volume/analyzer/import:/mnt/analyzer-import:ro
+      # - ./openelis/volume/analyzer/archive:/mnt/analyzer-archive
+      # - ./openelis/volume/analyzer/error:/mnt/analyzer-error
+    # Uncomment for RS232 (Sysmex serial):
+    # devices:
+    #   - ${OPENELIS_ANALYZER_SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0
+    environment:
+      LOGGING_LEVEL_ORG_ITECH: ${OPENELIS_ANALYZER_BRIDGE_LOG_LEVEL:-DEBUG}
+      SPRING_PROFILES_ACTIVE: ${OPENELIS_ANALYZER_BRIDGE_PROFILE:-dev}
+      BRIDGE_AUTH_PASSWORD: ${OPENELIS_ANALYZER_BRIDGE_AUTH_PASSWORD:-changeme}
+      OPENELIS_USERNAME: ${OPENELIS_USERNAME:-admin}
+      OPENELIS_PASSWORD: ${OPENELIS_PASSWORD:-adminADMIN!}
+      # Prevent OOM when analyzer hits wrong ASTM port (non-compliant fallback)
+      JAVA_TOOL_OPTIONS: ${OPENELIS_ANALYZER_BRIDGE_JAVA_OPTS:--Xms256m -Xmx1024m}
+    networks:
+      - nidan-network
+    healthcheck:
+      test: ["CMD", "/app/healthcheck.sh"]
+      timeout: 10s
+      interval: 30s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+    # Avoid unbounded memory growth if a bad ASTM stream arrives
+    mem_limit: ${OPENELIS_ANALYZER_BRIDGE_MEM_LIMIT:-1g}
+
   nidan-integration-db:
     profiles: ["middleware","nidanehr-standard"]
     image: postgres:15

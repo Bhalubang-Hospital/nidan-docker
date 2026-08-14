@@ -14,6 +14,51 @@
     "DicomServerEnabled": true,
     "DicomPort": 4242,
     "DicomAet": "NIDAN_ORTHANC",
+    // Carestream Image Suite negotiates up to 64 KB PDUs (DICOM conformance).
+    "DicomScpMaxPduLength": 65536,
+    "DicomScuTimeout": 30,
+    "DicomCheckCalledAet": false,
+    "DicomCheckModalityHost": false,
+    // C-ECHO / C-STORE from unknown AEs are allowed so first-contact testing works
+    // if Image Suite's calling AE is not yet known. MWL C-FIND still requires a
+    // registered modality (see DicomModalities).
+    "DicomAlwaysAllowEcho": true,
+    "DicomAlwaysAllowStore": true,
+    "DicomAlwaysAllowFind": false,
+    "DicomAlwaysAllowFindWorklist": false,
+    "DicomModalities": {
+        // Bhalubang Hospital Carestream Image Suite (192.168.10.115).
+        // Station Name: ImageSuiteWSD. Institution: Bhalubang Hospital.
+        // Factory DICOM Settings AE is "ImageSuite" (SSCU/MWLSCU/SSCP), port 104.
+        // Both AETs are registered so MWL C-FIND is accepted whichever calling AE
+        // Image Suite uses. Confirm with POST /modalities/<id>/echo after restart.
+        "imagesuite-wsd": {
+            "AET": "ImageSuiteWSD",
+            "Host": "192.168.10.115",
+            "Port": 104,
+            "Manufacturer": "Generic",
+            "AllowEcho": true,
+            "AllowFind": true,
+            "AllowFindWorklist": true,
+            "AllowStore": true,
+            "AllowStorageCommitment": true,
+            "AllowMove": true,
+            "Timeout": 30
+        },
+        "imagesuite": {
+            "AET": "ImageSuite",
+            "Host": "192.168.10.115",
+            "Port": 104,
+            "Manufacturer": "Generic",
+            "AllowEcho": true,
+            "AllowFind": true,
+            "AllowFindWorklist": true,
+            "AllowStore": true,
+            "AllowStorageCommitment": true,
+            "AllowMove": true,
+            "Timeout": 30
+        }
+    },
     "HttpServerEnabled": true,
     "HttpPort": 8042,
     "RemoteAccessAllowed": true,

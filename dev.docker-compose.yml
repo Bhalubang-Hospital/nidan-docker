@@ -417,6 +417,36 @@ services:
       openelis:
         condition: service_healthy
 
+  # OpenELIS Analyzer Bridge — ASTM/HL7 middleware (Sysmex XN-350, etc.)
+  openelis-analyzer-bridge:
+    image: ${OPENELIS_ANALYZER_BRIDGE_IMAGE:-itechuw/openelis-analyzer-bridge:latest}
+    platform: linux/amd64
+    container_name: nidan-openelis-analyzer-bridge
+    depends_on:
+      openelis:
+        condition: service_healthy
+    ports:
+      - "${OPENELIS_ANALYZER_BRIDGE_HTTP_PORT:-8442}:8443"
+      - "${OPENELIS_ANALYZER_BRIDGE_ASTM_PORT:-12000}:12001"
+      - "${OPENELIS_ANALYZER_BRIDGE_ASTM95_PORT:-12010}:12011"
+      - "${OPENELIS_ANALYZER_BRIDGE_MLLP_PORT:-2575}:2575"
+    volumes:
+      - ./openelis/analyzer-bridge/configuration.yml:/app/configuration.yml:ro
+      - ./openelis/volume/certs:/etc/openelis-global:ro
+    environment:
+      LOGGING_LEVEL_ORG_ITECH: ${OPENELIS_ANALYZER_BRIDGE_LOG_LEVEL:-INFO}
+      SPRING_PROFILES_ACTIVE: ${OPENELIS_ANALYZER_BRIDGE_PROFILE:-dev}
+      BRIDGE_AUTH_PASSWORD: ${OPENELIS_ANALYZER_BRIDGE_AUTH_PASSWORD:-changeme}
+    networks:
+      - nidan-network
+    healthcheck:
+      test: ["CMD", "/app/healthcheck.sh"]
+      timeout: 10s
+      interval: 30s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
   # ============================================================================
   # NIDAN INTEGRATION MIDDLEWARE (Kafka + Postgres + CIS/OIS)
   # ============================================================================
