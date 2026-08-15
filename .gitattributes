@@ -1,0 +1,6 @@
+# Every file here is consumed by a Linux container. Git for Windows defaults to
+# core.autocrlf=true, which checks scripts out with CRLF - a bind-mounted entrypoint then
+# fails with "no such file or directory" (the \r is part of the interpreter path) and
+# odoo.conf / *.properties get \r glued onto every value. Force LF regardless of host.
+# text=auto still detects binaries (png, p12, war) and leaves them alone.
+* text=auto eol=lf
